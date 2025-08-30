@@ -24,7 +24,7 @@ Use N-MNIST and PokerDVS.
 Set dataset paths in the notebook cells as indicated.
 
 ### Repo
-cnn-snn-vae/
+cnn-snn-vae
 ├─ VAE_Clf_NMNIST_FullRun.ipynb
 └─ VAE_Clf_PokerDVS_FullRun.ipynb
 
