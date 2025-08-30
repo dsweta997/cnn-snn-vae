@@ -27,3 +27,4 @@ Set dataset paths in the notebook cells as indicated.
 cnn-snn-vae/
 ├─ VAE_Clf_NMNIST_FullRun.ipynb
 └─ VAE_Clf_PokerDVS_FullRun.ipynb
+
