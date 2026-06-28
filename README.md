@@ -4,9 +4,9 @@ A convolutional-spiking VAE (with MMD prior) and a spiking classifier built on i
 
 ### Files
 
-VAE_Clf_NMNIST_FullRun.ipynb — end-to-end on N-MNIST
+VAE\_Clf\_NMNIST\_FullRun.ipynb — end-to-end on N-MNIST dataset
 
-VAE_Clf_PokerDVS_FullRun.ipynb — end-to-end on PokerDVS
+VAE\_Clf\_PokerDVS\_FullRun.ipynb — end-to-end on PokerDVS dataset
 
 ### Highlights
 
@@ -22,3 +22,4 @@ Optional spiking classifier head
 
 Use N-MNIST and PokerDVS.
 Set dataset paths in the notebook cells as indicated.
+
