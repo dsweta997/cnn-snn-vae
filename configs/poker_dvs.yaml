@@ -1,0 +1,55 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# PokerDVS experiment configuration
+# ─────────────────────────────────────────────────────────────────────────────
+# Dataset: PokerDVS (DVS-128 recordings of playing-card symbols)
+#   Sensor:  64 × 64 pixels (cropped from 128×128), 2 polarities
+#   Classes: 4 (heart, spade, club, diamond)
+#   Format:  AEDAT files in per-class sub-folders
+#   Note:    Both ON and OFF polarities are summed (unlike N-MNIST).
+
+dataset:
+  name: poker_dvs
+  directory_path: /path/to/poker_dvs/  # update to your local AEDAT folder
+  sensor_size: [64, 64, 2]
+  n_steps: 8                            # time bins (T)
+  denoise_filter_time: 500              # stricter denoising for sparse data
+  batch_size: 16
+  num_workers: 0
+  num_classes: 4
+  train_ratio: 0.9                      # fraction of data for training
+  split_seed: 42                        # RNG seed for stratified split
+
+# ── VAE architecture ──────────────────────────────────────────────────────────
+# 2-block encoder: 1 → 64 → 128  (stride-2 per block)
+# Spatial bottleneck after encoding: 64 → 32 → 16  (16×16 = 256 spatial units)
+vae:
+  hidden_dims: [64, 128]
+  latent_dim: 256
+  bottleneck_hw: [16, 16]              # H'×W' at the encoder output
+  decoder_output_padding: [1, 1, 0]   # needed to recover even spatial dims
+  in_channels: 1
+  distance_lambda: 0.001
+  mmd_type: rbf
+
+# ── Neuron parameters (match dissertation §4) ─────────────────────────────────
+neuron:
+  Vth: 0.3       # higher threshold than N-MNIST
+  aa: 0.5
+  tau: 0.35
+
+# ── VAE training ──────────────────────────────────────────────────────────────
+training:
+  num_epochs: 150
+  lr: 0.005                             # higher LR than N-MNIST
+  weight_decay: 0.001
+  sample_layer_lr_multiplier: 10
+  checkpoint_dir: checkpoints/poker_dvs/train
+
+# ── Classifier ────────────────────────────────────────────────────────────────
+classifier:
+  num_epochs: 10
+  lr: 0.001
+  weight_decay: 0.001
+  init_beta: 0.9
+  vae_checkpoint: checkpoints/poker_dvs/vae_poker_dvs_final.pt
+  clf_checkpoint: checkpoints/poker_dvs/clf_poker_dvs_final.pt

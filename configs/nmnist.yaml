@@ -1,0 +1,51 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# N-MNIST experiment configuration
+# ─────────────────────────────────────────────────────────────────────────────
+# Dataset: Neuromorphic MNIST (60 k train / 10 k test)
+#   Sensor:  34 × 34 pixels, 2 polarities
+#   Classes: 10 (digits 0–9)
+#   Source:  tonic.datasets.NMNIST  (downloaded automatically)
+
+dataset:
+  name: nmnist
+  data_root: ../tutorials/data          # tonic cache directory
+  n_steps: 16                           # time bins (T)
+  denoise_filter_time: 10000            # noise filter threshold (µs)
+  batch_size: 32
+  num_workers: 0                        # set >0 on Linux for speed
+  num_classes: 10
+
+# ── VAE architecture ──────────────────────────────────────────────────────────
+# 5-block encoder: 1 → 32 → 64 → 128 → 256 → 512  (stride-2 per block)
+# Spatial bottleneck after encoding: 34 → 17 → 9 → 5 → 3 → 2  (≈ 2×2)
+vae:
+  hidden_dims: [32, 64, 128, 256, 512]
+  latent_dim: 64
+  bottleneck_hw: [2, 2]                 # H'×W' at the encoder output
+  decoder_output_padding: 0             # intermediate decoder stages (odd maps)
+  in_channels: 1
+  distance_lambda: 0.001
+  mmd_type: rbf
+
+# ── Neuron parameters (match dissertation §4) ─────────────────────────────────
+neuron:
+  Vth: 0.2       # spike threshold
+  aa: 0.5        # box surrogate half-width
+  tau: 0.35      # membrane decay
+
+# ── VAE training ──────────────────────────────────────────────────────────────
+training:
+  num_epochs: 15
+  lr: 0.0003
+  weight_decay: 0.001
+  sample_layer_lr_multiplier: 10        # sample_layer gets 10× higher LR
+  checkpoint_dir: checkpoints/nmnist/train
+
+# ── Classifier (trained after VAE) ───────────────────────────────────────────
+classifier:
+  num_epochs: 5
+  lr: 0.001
+  weight_decay: 0.001
+  init_beta: 0.9                        # initial LIF membrane decay
+  vae_checkpoint: checkpoints/nmnist/vae_nmnist_final.pt
+  clf_checkpoint: checkpoints/nmnist/clf_nmnist_final.pt
