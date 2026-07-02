@@ -52,16 +52,26 @@ def main():
         cfg = yaml.safe_load(f)
 
     device = args.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
-    print(f"Device: {device}")
+
+    print(f"\n{'='*65}")
+    print(f"  CNN-SNN-VAE  |  PokerDVS")
+    print(f"{'='*65}")
+    print(f"  Config : {args.config}")
+    print(f"  Device : {device}")
 
     # ── Apply neuron hyper-parameters from config ─────────────────────────────
     layer_module.Vth = cfg["neuron"]["Vth"]
     layer_module.aa  = cfg["neuron"]["aa"]
     layer_module.tau = cfg["neuron"]["tau"]
+    print(f"  Neuron : Vth={layer_module.Vth}  aa={layer_module.aa}  tau={layer_module.tau}")
 
     # ── Data ──────────────────────────────────────────────────────────────────
     dc = cfg["dataset"]
-    print("Loading PokerDVS …")
+    print(f"\n  Loading PokerDVS from: {dc['directory_path']}")
+    gmin, gmax = dc.get("global_min"), dc.get("global_max")
+    if gmin is not None and gmax is not None:
+        print(f"  Using precomputed normalisation range: [{gmin}, {gmax}]")
+    import sys; sys.stdout.flush()
     trainloader, testloader = make_poker_dvs_loaders(
         directory_path=dc["directory_path"],
         n_steps=dc["n_steps"],
@@ -70,14 +80,30 @@ def main():
         denoise_filter_time=dc["denoise_filter_time"],
         num_workers=dc["num_workers"],
         seed=dc["split_seed"],
+        global_min=gmin,
+        global_max=gmax,
     )
-    print(f"  Train batches: {len(trainloader)}  Test batches: {len(testloader)}")
+    print(f"  Dataset ready.")
+    print(f"  Train batches : {len(trainloader)}")
+    print(f"  Test  batches : {len(testloader)}")
 
     # ── VAE ───────────────────────────────────────────────────────────────────
     vc = cfg["vae"]
     tc = cfg["training"]
     vae_checkpoint = cfg["classifier"]["vae_checkpoint"]
     clf_checkpoint = cfg["classifier"]["clf_checkpoint"]
+
+    print(f"\n  VAE config:")
+    print(f"    hidden_dims        : {vc['hidden_dims']}")
+    print(f"    latent_dim         : {vc['latent_dim']}")
+    print(f"    bottleneck_hw      : {vc['bottleneck_hw']}")
+    print(f"    mmd_type           : {vc['mmd_type']}")
+    print(f"    distance_lambda    : {vc['distance_lambda']}")
+    print(f"  Training config:")
+    print(f"    num_epochs         : {tc['num_epochs']}")
+    print(f"    lr                 : {tc['lr']}")
+    print(f"    sample_layer lr×   : {tc['sample_layer_lr_multiplier']}")
+    print(f"    checkpoint_dir     : {tc['checkpoint_dir']}")
 
     net = VAE(
         hidden_dims=vc["hidden_dims"],
@@ -90,6 +116,9 @@ def main():
         mmd_type=vc["mmd_type"],
         device=device,
     ).to(device)
+
+    total_p = sum(p.numel() for p in net.parameters())
+    print(f"\n  VAE built: {total_p:,} parameters")
 
     if not args.clf_only:
         params = list(net.named_parameters())
@@ -117,6 +146,7 @@ def main():
             optimizer=optimizer,
             num_epochs=tc["num_epochs"],
             checkpoint_dir=tc["checkpoint_dir"],
+            test_checkpoint_dir=tc["checkpoint_dir"].replace("train", "test"),
             device=device,
         )
 
@@ -150,8 +180,15 @@ def main():
         )
         criterion = SF.ce_rate_loss()
 
-        print(f"\nTraining classifier for {cc['num_epochs']} epochs …")
+        clf_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"\n{'='*65}")
+        print(f"  SNN Classifier Training")
+        print(f"  Trainable params : {clf_params:,}  (encoder frozen)")
+        print(f"  Epochs           : {cc['num_epochs']}")
+        print(f"  lr               : {cc['lr']}")
+        print(f"{'='*65}")
         for epoch in range(1, cc["num_epochs"] + 1):
+            print(f"\n  Classifier epoch {epoch}/{cc['num_epochs']} ...")
             tr = train_one_epoch_classifier(model, trainloader, clf_optimizer, criterion, device)
             te = test_classifier(model, testloader, criterion, device)
             print(
@@ -162,7 +199,10 @@ def main():
 
         os.makedirs(os.path.dirname(clf_checkpoint) or ".", exist_ok=True)
         torch.save(model.state_dict(), clf_checkpoint)
-        print(f"Classifier saved → {clf_checkpoint}")
+        print(f"\n  Classifier saved → {clf_checkpoint}")
+        print(f"\n{'='*65}")
+        print(f"  Training complete.")
+        print(f"{'='*65}")
 
 
 if __name__ == "__main__":

@@ -39,8 +39,11 @@ where `r_q` is the time-averaged posterior spike rate and `r_p = sigmoid(W·ε)`
 
 ```
 cnn-snn-vae/
-│── archive/
-|
+│
+├── archive/ │
+│   ├── VAE_Clf_NMNIST_FullRun.ipynb     # original Jupyter notebook (N-MNIST)
+│   ├── VAE_Clf_PokerDVS_FullRun.ipynb   # original Jupyter notebook (PokerDVS)               
+│
 ├── src/                         # importable Python package
 │   ├── __init__.py
 │   ├── layers.py                # SpikeAct, LIFSpike, SampledSpikeAct, tdLinear,
@@ -59,6 +62,9 @@ cnn-snn-vae/
 │
 ├── train_nmnist.py              # entry-point: VAE + classifier on N-MNIST
 ├── train_poker_dvs.py           # entry-point: VAE + classifier on PokerDVS
+│
+├── verify_training.py           # Test VAE and Classifier outputs
+│
 │
 ├── requirements.txt
 └── README.md
