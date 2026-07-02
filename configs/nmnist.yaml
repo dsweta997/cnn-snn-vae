@@ -8,7 +8,7 @@
 
 dataset:
   name: nmnist
-  data_root: C:\data\sweta_das\CV_data\nmnist         # tonic cache directory
+  data_root: C:\user\CV_data\nmnist         # tonic cache directory
   n_steps: 16                           # time bins (T)
   denoise_filter_time: 10000            # noise filter threshold (µs)
   batch_size: 32
@@ -41,7 +41,7 @@ training:
   lr: 0.0003
   weight_decay: 0.001
   sample_layer_lr_multiplier: 10        # sample_layer gets 10× higher LR
-  checkpoint_dir: C:\Users\Sweta\Desktop\ClaudeProjects\MastersDissertation\checkpoints\nmnist\train
+  checkpoint_dir: C:\user\CV_data\checkpoints\nmnist\train
 
 # ── Classifier (trained after VAE) ───────────────────────────────────────────
 classifier:
@@ -49,5 +49,5 @@ classifier:
   lr: 0.001
   weight_decay: 0.001
   init_beta: 0.9                        # initial LIF membrane decay
-  vae_checkpoint: C:\Users\Sweta\Desktop\ClaudeProjects\MastersDissertation\checkpoints\nmnist\vae_nmnist_final.pt
-  clf_checkpoint: C:\Users\Sweta\Desktop\ClaudeProjects\MastersDissertation\checkpoints\nmnist\clf_nmnist_final.pt
+  vae_checkpoint: C:\user\CV_data\checkpoints\nmnist\vae_nmnist_final.pt
+  clf_checkpoint: C:\user\CV_data\checkpoints\nmnist\clf_nmnist_final.pt

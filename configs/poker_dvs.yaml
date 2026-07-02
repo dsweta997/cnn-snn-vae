@@ -9,7 +9,7 @@
 
 dataset:
   name: poker_dvs
-  directory_path: C:\Users\Sweta\Desktop\ClaudeProjects\MastersDissertation\poker_dvs  # update to your local AEDAT folder
+  directory_path: C:\user\CV_data\poker_dvs  # update to your local AEDAT folder
   sensor_size: [64, 64, 2]
   n_steps: 8                            # time bins (T)
   denoise_filter_time: 500              # stricter denoising for sparse data
@@ -45,7 +45,7 @@ training:
   lr: 0.005                             # higher LR than N-MNIST
   weight_decay: 0.001
   sample_layer_lr_multiplier: 10
-  checkpoint_dir: C:\Users\Sweta\Desktop\ClaudeProjects\MastersDissertation\checkpoints\poker_dvs\train
+  checkpoint_dir: C:\user\CV_data\checkpoints\poker_dvs\train
 
 # ── Classifier ────────────────────────────────────────────────────────────────
 classifier:
@@ -53,5 +53,5 @@ classifier:
   lr: 0.001
   weight_decay: 0.001
   init_beta: 0.9
-  vae_checkpoint: C:\Users\Sweta\Desktop\ClaudeProjects\MastersDissertation\checkpoints\poker_dvs\vae_poker_dvs_final.pt
-  clf_checkpoint: C:\Users\Sweta\Desktop\ClaudeProjects\MastersDissertation\checkpoints\poker_dvs\clf_poker_dvs_final.pt
+  vae_checkpoint: C:\user\CV_data\checkpoints\poker_dvs\vae_poker_dvs_final.pt
+  clf_checkpoint: C:\user\CV_data\checkpoints\poker_dvs\clf_poker_dvs_final.pt
