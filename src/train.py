@@ -10,7 +10,7 @@ train_model      -- full training loop over N epochs, with checkpointing
 from __future__ import annotations
 
 import os
-from collections import defaultdict
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -24,6 +24,8 @@ from .utils import (
     save_epoch_images,
     save_mean_z_heatmap,
 )
+
+LOG_EVERY = 50   # print a progress line every this many batches
 
 
 def train_one_epoch(
@@ -70,6 +72,13 @@ def train_one_epoch(
     mean_sampled_z_q = 0
 
     network.train()
+    n_batches  = len(trainloader)
+    epoch_t0   = time.time()
+    batch_t0   = time.time()
+
+    print(f"\n{'='*65}")
+    print(f"  EPOCH {epoch}/{max_epoch}  (train)  --  {n_batches} batches")
+    print(f"{'='*65}")
 
     for batch_idx, (real_img, labels) in enumerate(trainloader):
         optimizer.zero_grad()
@@ -84,6 +93,7 @@ def train_one_epoch(
         losses = network.loss_function_mmd(spike_input, x_recon, r_q, r_p)
         losses["loss"].backward()
         optimizer.step()
+        network.weight_clipper()   # clamp weights to [-4, 4] after each update
 
         # Track losses
         loss_meter.update(losses["loss"].detach().cpu().item())
@@ -101,19 +111,31 @@ def train_one_epoch(
             distribution_vec = per_batch_mean.sum(-1)   # (latent_dim,)
             stats_dict["histogram_cache"].append(distribution_vec.detach().cpu())
 
+        # Per-batch progress line
+        if (batch_idx + 1) % LOG_EVERY == 0 or batch_idx == n_batches - 1:
+            elapsed      = time.time() - epoch_t0
+            secs_per_bat = elapsed / (batch_idx + 1)
+            remaining    = secs_per_bat * (n_batches - batch_idx - 1)
+            print(
+                f"  batch {batch_idx+1:>5}/{n_batches}  "
+                f"loss={loss_meter.avg:.5f}  "
+                f"recon={recons_meter.avg:.5f}  "
+                f"MMD={dist_meter.avg:.5f}  "
+                f"elapsed={elapsed:.0f}s  ETA={remaining:.0f}s"
+            )
+
         # Save a reconstruction grid at the last batch of the epoch
-        if batch_idx == len(trainloader) - 1:
+        if batch_idx == n_batches - 1:
             save_epoch_images(
                 spike_input[0][0], x_recon[0][0],
                 str(labels[0].item()), epoch, checkpoint_dir,
                 n_timesteps=network.n_steps,
             )
 
+    epoch_elapsed = time.time() - epoch_t0
     print(
-        f"Train [{epoch}/{max_epoch}]  "
-        f"Loss: {loss_meter.avg:.5f}  "
-        f"Recon: {recons_meter.avg:.5f}  "
-        f"MMD: {dist_meter.avg:.5f}"
+        f"\n  >>> Train epoch {epoch} done in {epoch_elapsed:.1f}s  |  "
+        f"avg loss={loss_meter.avg:.5f}  recon={recons_meter.avg:.5f}  MMD={dist_meter.avg:.5f}"
     )
 
     stats_dict["per_epoch"]["loss"].append(loss_meter.avg)
@@ -164,6 +186,10 @@ def test_one_epoch(
     hist_epoch_dir = os.path.join(checkpoint_dir, "hist_test")
     os.makedirs(hist_epoch_dir, exist_ok=True)
 
+    n_batches = len(testloader)
+    test_t0   = time.time()
+    print(f"\n  --- Test epoch {epoch}/{max_epoch}  ({n_batches} batches) ---")
+
     for batch_idx, (real_img, labels) in enumerate(testloader):
         real_img = real_img.to(device, non_blocking=True)
         labels   = labels.to(device,   non_blocking=True)
@@ -185,6 +211,14 @@ def test_one_epoch(
         distribution_vec = per_batch_mean.sum(-1)
         stats_dict["test_histogram_cache"].append(distribution_vec.detach().cpu())
 
+        if (batch_idx + 1) % LOG_EVERY == 0 or batch_idx == n_batches - 1:
+            print(
+                f"  [test] batch {batch_idx+1:>4}/{n_batches}  "
+                f"loss={loss_meter.avg:.5f}  "
+                f"recon={recons_meter.avg:.5f}  "
+                f"MMD={dist_meter.avg:.5f}"
+            )
+
         # Visualise at the very first batch of each epoch
         if batch_idx == 0:
             save_epoch_images(
@@ -204,10 +238,8 @@ def test_one_epoch(
             plt.close(fig)
 
     print(
-        f"Test  [{epoch}/{max_epoch}]  "
-        f"Loss: {loss_meter.avg:.5f}  "
-        f"Recon: {recons_meter.avg:.5f}  "
-        f"MMD: {dist_meter.avg:.5f}"
+        f"  >>> Test  epoch {epoch} done in {time.time()-test_t0:.1f}s  |  "
+        f"avg loss={loss_meter.avg:.5f}  recon={recons_meter.avg:.5f}  MMD={dist_meter.avg:.5f}"
     )
 
     stats_dict["per_epoch_test"]["loss"].append(loss_meter.avg)
@@ -220,13 +252,14 @@ def test_one_epoch(
 
 
 def train_model(
-    network:        VAE,
-    trainloader:    torch.utils.data.DataLoader,
-    testloader:     torch.utils.data.DataLoader,
-    optimizer:      torch.optim.Optimizer,
-    num_epochs:     int  = 15,
-    checkpoint_dir: str  = "checkpoints/train",
-    device:         str  = "cuda:0",
+    network:             VAE,
+    trainloader:         torch.utils.data.DataLoader,
+    testloader:          torch.utils.data.DataLoader,
+    optimizer:           torch.optim.Optimizer,
+    num_epochs:          int = 15,
+    checkpoint_dir:      str = "checkpoints/train",
+    test_checkpoint_dir: str | None = None,
+    device:              str = "cuda:0",
 ) -> dict:
     """
     Full VAE training loop.
@@ -236,22 +269,38 @@ def train_model(
     a .npz archive and a PNG.
 
     Args:
-        network        : VAE model.
-        trainloader    : Training DataLoader.
-        testloader     : Validation/test DataLoader.
-        optimizer      : Optimiser.
-        num_epochs     : Number of training epochs.
-        checkpoint_dir : Root directory for all saved outputs.
-        device         : Device string.
+        network             : VAE model.
+        trainloader         : Training DataLoader.
+        testloader          : Validation/test DataLoader.
+        optimizer           : Optimiser.
+        num_epochs          : Number of training epochs.
+        checkpoint_dir      : Root directory for training outputs (images, hists).
+        test_checkpoint_dir : Root directory for test outputs.  Defaults to
+                              checkpoint_dir + '_test' if not provided.
+        device              : Device string.
 
     Returns:
         stats_dict — complete training statistics dictionary.
     """
     os.makedirs(checkpoint_dir, exist_ok=True)
-    test_dir = checkpoint_dir.replace("train", "test")
+    test_dir = test_checkpoint_dir or (checkpoint_dir.rstrip("/\\") + "_test")
     os.makedirs(test_dir, exist_ok=True)
 
-    stats_dict = init_stats_dict()
+    total_params     = sum(p.numel() for p in network.parameters())
+    trainable_params = sum(p.numel() for p in network.parameters() if p.requires_grad)
+    print(f"\n{'#'*65}")
+    print(f"  VAE Training")
+    print(f"  Device         : {device}")
+    print(f"  Epochs         : {num_epochs}")
+    print(f"  Train batches  : {len(trainloader)}")
+    print(f"  Test  batches  : {len(testloader)}")
+    print(f"  Total params   : {total_params:,}")
+    print(f"  Trainable      : {trainable_params:,}")
+    print(f"  Checkpoint dir : {checkpoint_dir}")
+    print(f"{'#'*65}\n")
+
+    stats_dict  = init_stats_dict()
+    training_t0 = time.time()
 
     for epoch in range(1, num_epochs + 1):
         train_one_epoch(
@@ -261,6 +310,15 @@ def train_model(
         test_one_epoch(
             network, testloader,
             epoch, num_epochs, stats_dict, test_dir, device,
+        )
+        elapsed_total = time.time() - training_t0
+        avg_per_epoch = elapsed_total / epoch
+        eta_remaining = avg_per_epoch * (num_epochs - epoch)
+        print(
+            f"\n  [Epoch {epoch}/{num_epochs} complete]  "
+            f"Total elapsed: {elapsed_total/60:.1f}min  "
+            f"Avg/epoch: {avg_per_epoch/60:.1f}min  "
+            f"ETA: {eta_remaining/60:.1f}min\n"
         )
 
     # ── Final histogram of latent spike distribution ──────────────────────────

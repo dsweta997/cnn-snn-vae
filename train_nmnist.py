@@ -52,30 +52,59 @@ def main():
         cfg = yaml.safe_load(f)
 
     device = args.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
-    print(f"Device: {device}")
+
+    print(f"\n{'='*65}")
+    print(f"  CNN-SNN-VAE  |  N-MNIST")
+    print(f"{'='*65}")
+    print(f"  Config : {args.config}")
+    print(f"  Device : {device}")
 
     # ── Apply neuron hyper-parameters from config ─────────────────────────────
     layer_module.Vth = cfg["neuron"]["Vth"]
     layer_module.aa  = cfg["neuron"]["aa"]
     layer_module.tau = cfg["neuron"]["tau"]
+    print(f"  Neuron : Vth={layer_module.Vth}  aa={layer_module.aa}  tau={layer_module.tau}")
 
     # ── Data ──────────────────────────────────────────────────────────────────
     dc = cfg["dataset"]
-    print("Loading N-MNIST …")
+    print(f"\n  Loading N-MNIST from: {dc['data_root']}")
+    gmin, gmax = dc.get("global_min"), dc.get("global_max")
+    if gmin is not None and gmax is not None:
+        print(f"  Using precomputed normalisation range: [{gmin}, {gmax}]")
+    else:
+        print(f"  NOTE: First run scans all 60 000 training samples to fit")
+        print(f"        normalisation — this may take several minutes ...")
+    import sys; sys.stdout.flush()
     trainloader, testloader = make_nmnist_loaders(
         data_root=dc["data_root"],
         n_steps=dc["n_steps"],
         batch_size=dc["batch_size"],
         denoise_filter_time=dc["denoise_filter_time"],
         num_workers=dc["num_workers"],
+        global_min=gmin,
+        global_max=gmax,
     )
-    print(f"  Train batches: {len(trainloader)}  Test batches: {len(testloader)}")
+    print(f"  Dataset ready.")
+    print(f"  Train batches : {len(trainloader)}  ({len(trainloader.dataset)} samples, batch {dc['batch_size']})")
+    print(f"  Test  batches : {len(testloader)}  ({len(testloader.dataset)} samples)")
 
     # ── VAE ───────────────────────────────────────────────────────────────────
     vc = cfg["vae"]
     tc = cfg["training"]
     clf_checkpoint = cfg["classifier"]["clf_checkpoint"]
     vae_checkpoint = cfg["classifier"]["vae_checkpoint"]
+
+    print(f"\n  VAE config:")
+    print(f"    hidden_dims        : {vc['hidden_dims']}")
+    print(f"    latent_dim         : {vc['latent_dim']}")
+    print(f"    bottleneck_hw      : {vc['bottleneck_hw']}")
+    print(f"    mmd_type           : {vc['mmd_type']}")
+    print(f"    distance_lambda    : {vc['distance_lambda']}")
+    print(f"  Training config:")
+    print(f"    num_epochs         : {tc['num_epochs']}")
+    print(f"    lr                 : {tc['lr']}")
+    print(f"    sample_layer lr×   : {tc['sample_layer_lr_multiplier']}")
+    print(f"    checkpoint_dir     : {tc['checkpoint_dir']}")
 
     net = VAE(
         hidden_dims=vc["hidden_dims"],
@@ -88,6 +117,9 @@ def main():
         mmd_type=vc["mmd_type"],
         device=device,
     ).to(device)
+
+    total_p = sum(p.numel() for p in net.parameters())
+    print(f"\n  VAE built: {total_p:,} parameters")
 
     if not args.clf_only:
         # ── Build optimizer: sample_layer gets a higher learning rate ─────────
@@ -116,6 +148,7 @@ def main():
             optimizer=optimizer,
             num_epochs=tc["num_epochs"],
             checkpoint_dir=tc["checkpoint_dir"],
+            test_checkpoint_dir=tc["checkpoint_dir"].replace("train", "test"),
             device=device,
         )
 
@@ -149,8 +182,15 @@ def main():
         )
         criterion = SF.ce_rate_loss()
 
-        print(f"\nTraining classifier for {cc['num_epochs']} epochs …")
+        clf_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"\n{'='*65}")
+        print(f"  SNN Classifier Training")
+        print(f"  Trainable params : {clf_params:,}  (encoder frozen)")
+        print(f"  Epochs           : {cc['num_epochs']}")
+        print(f"  lr               : {cc['lr']}")
+        print(f"{'='*65}")
         for epoch in range(1, cc["num_epochs"] + 1):
+            print(f"\n  Classifier epoch {epoch}/{cc['num_epochs']} ...")
             tr = train_one_epoch_classifier(model, trainloader, clf_optimizer, criterion, device)
             te = test_classifier(model, testloader, criterion, device)
             print(
@@ -161,7 +201,10 @@ def main():
 
         os.makedirs(os.path.dirname(clf_checkpoint) or ".", exist_ok=True)
         torch.save(model.state_dict(), clf_checkpoint)
-        print(f"Classifier saved → {clf_checkpoint}")
+        print(f"\n  Classifier saved → {clf_checkpoint}")
+        print(f"\n{'='*65}")
+        print(f"  Training complete.")
+        print(f"{'='*65}")
 
 
 if __name__ == "__main__":

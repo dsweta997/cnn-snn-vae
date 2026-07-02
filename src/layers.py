@@ -19,8 +19,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# ── Neuron hyper-parameters (match dissertation §4) ─────────────────────────
-Vth: float = 0.5   # spike threshold (overridden per dataset via config)
+# ── Neuron hyper-parameters ───────────────────────────────────────────────────
+# Defaults match the N-MNIST experiment in the dissertation.
+# PokerDVS uses Vth=0.3.  Entry-point scripts override these before
+# constructing the model via:  import src.layers as L; L.Vth = cfg_value
+Vth: float = 0.2   # spike threshold
 aa:  float = 0.5   # box surrogate half-width
 tau: float = 0.35  # LIF membrane decay
 
@@ -107,9 +110,10 @@ class LIFSpike(nn.Module):
         u_prev: torch.Tensor,
         o_prev: torch.Tensor,
         x_cur:  torch.Tensor,
-        decay:  float = tau,
     ):
-        u_cur = decay * u_prev * (1.0 - o_prev) + x_cur
+        # tau is read from the module namespace at call time so that
+        # layer_module.tau = new_value takes effect without reimporting.
+        u_cur = tau * u_prev * (1.0 - o_prev) + x_cur
         o_cur = SpikeAct.apply(u_cur)
         return u_cur, o_cur
 
@@ -321,7 +325,7 @@ class tdBatchNorm(nn.BatchNorm2d):
         self,
         num_features: int,
         eps:      float = 1e-5,
-        momentum: float = 0.1,
+        momentum: float = 0.2,   # matches original dissertation experiments
         alpha:    float = 1.0,
         affine:   bool  = True,
     ):
@@ -329,30 +333,34 @@ class tdBatchNorm(nn.BatchNorm2d):
         self.alpha = alpha
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
-        # input: (N, C, T, H, W)
-        N, C, T, H, W = input.shape
+        # input: (N, C, *, *, *)  — any 5-D tensor; non-channel dims are
+        # collapsed together, so the exact H/W/T labelling does not matter.
+        N, C = input.shape[:2]
 
-        # Compute mean/var over N,T,H,W per channel (collapse to scalar per C)
-        mean = input.mean(dim=[0, 2, 3, 4], keepdim=True)   # (1,C,1,1,1)
-        var  = input.var( dim=[0, 2, 3, 4], keepdim=True, unbiased=False)
+        if self.training:
+            # Compute batch statistics and update running estimates
+            mean = input.mean(dim=[0, 2, 3, 4], keepdim=True)
+            var  = input.var( dim=[0, 2, 3, 4], keepdim=True, unbiased=False)
 
-        # Update running stats
-        n_elements = N * T * H * W
-        with torch.no_grad():
-            self.running_mean = (
-                (1 - self.momentum) * self.running_mean
-                + self.momentum * mean.mean(dim=[0, 2, 3, 4])
-            )
-            self.running_var = (
-                (1 - self.momentum) * self.running_var
-                + self.momentum * var.mean(dim=[0, 2, 3, 4]) * n_elements / (n_elements - 1)
-            )
+            n_elements = input.numel() // C
+            with torch.no_grad():
+                self.running_mean = (
+                    (1 - self.momentum) * self.running_mean
+                    + self.momentum * mean.view(C)
+                )
+                self.running_var = (
+                    (1 - self.momentum) * self.running_var
+                    + self.momentum * var.view(C) * n_elements / max(n_elements - 1, 1)
+                )
+        else:
+            # Use accumulated running statistics at evaluation time
+            mean = self.running_mean.view(1, C, 1, 1, 1)
+            var  = self.running_var.view( 1, C, 1, 1, 1)
 
-        # Normalise
+        # Normalise and scale by alpha * Vth
         x_hat = (input - mean) / (var + self.eps).sqrt()
-
-        # Scale by alpha * Vth, then apply optional learned affine
         out = self.alpha * Vth * x_hat
+
         if self.affine:
             gamma = self.weight.view(1, C, 1, 1, 1)
             beta  = self.bias.view(1, C, 1, 1, 1)

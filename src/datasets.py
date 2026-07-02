@@ -29,6 +29,7 @@ class_counts_from_indices  -- diagnostic count per class
 from __future__ import annotations
 
 import os
+import pickle
 from collections import defaultdict
 
 import numpy as np
@@ -58,17 +59,19 @@ class MergePolarity:
     def __call__(self, x: torch.Tensor | np.ndarray) -> torch.Tensor:
         if isinstance(x, np.ndarray):
             x = torch.from_numpy(x)
+        # tonic ToFrame output is (T, C, H, W); slicing dim-1 collapses polarity
+        # → (T, H, W)
         if self.mode == "on_only":
-            return x[:, 0, :, :]        # positive polarity only  (C,H,W) → (H,W) no, stays 4D
-        return x[:, 0, :, :] + x[:, 1, :, :]  # sum ON + OFF
+            return x[:, 0, :, :]
+        return x[:, 0, :, :] + x[:, 1, :, :]
 
 
 class PermuteChannels:
     """
-    Reorder tensor from (C, H, W) → (H, W, C).
+    Reorder tensor from (T, H, W) → (H, W, T).
 
-    After tonic's ToFrame the shape is (C, H, W, T) which becomes (H, W, T)
-    after MergePolarity drops the channel dim.  This transform produces
+    After tonic's ToFrame + MergePolarity the shape is (T, H, W).
+    This transform moves the time axis to the last position to produce
     the (H, W, T) layout expected by the VAE's unsqueeze(1) call, so that
     the final batch tensor is (N, 1, H, W, T).
     """
@@ -76,7 +79,7 @@ class PermuteChannels:
     def __call__(self, x: torch.Tensor | np.ndarray) -> torch.Tensor:
         if isinstance(x, np.ndarray):
             x = torch.from_numpy(x)
-        return x.permute(1, 2, 0)   # (H, W, T)
+        return x.permute(1, 2, 0)   # (T, H, W) → (H, W, T)
 
 
 class NormalizeZeroToOne:
@@ -267,6 +270,8 @@ def make_nmnist_loaders(
     batch_size:  int   = 32,
     denoise_filter_time: int = 10_000,
     num_workers: int   = 0,
+    global_min:  float | None = None,
+    global_max:  float | None = None,
 ) -> tuple[DataLoader, DataLoader]:
     """
     Build N-MNIST train and test DataLoaders.
@@ -280,28 +285,33 @@ def make_nmnist_loaders(
         batch_size (int): Training batch size.  Default: 32.
         denoise_filter_time (int): Noise filter time constant (µs).
         num_workers (int): DataLoader workers.  Default: 0 (safe on Windows).
+        global_min (float, optional): Precomputed global min pixel value.
+            If both global_min and global_max are given, the expensive
+            full-dataset scan (compute_global_min_max) is skipped.
+        global_max (float, optional): Precomputed global max pixel value.
 
     Returns:
         (trainloader, testloader)
     """
     sensor_size = tonic.datasets.NMNIST.sensor_size
 
-    base_transform = transforms.Compose([
-        tonic.transforms.Denoise(filter_time=denoise_filter_time),
-        transforms.ToFrame(sensor_size=sensor_size, n_time_bins=n_steps),
-        MergePolarity(mode="on_only"),
-        PermuteChannels(),
-    ])
+    if global_min is not None and global_max is not None:
+        gmin, gmax = global_min, global_max
+    else:
+        base_transform = transforms.Compose([
+            tonic.transforms.Denoise(filter_time=denoise_filter_time),
+            transforms.ToFrame(sensor_size=sensor_size, n_time_bins=n_steps),
+            MergePolarity(mode="on_only"),
+            PermuteChannels(),
+        ])
 
-    train_dataset = tonic.datasets.NMNIST(
-        save_to=data_root, train=True, transform=base_transform
-    )
-    test_dataset = tonic.datasets.NMNIST(
-        save_to=data_root, train=False, transform=base_transform
-    )
+        train_dataset = tonic.datasets.NMNIST(
+            save_to=data_root, train=True, transform=base_transform
+        )
 
-    # Fit normalisation on the training set only
-    gmin, gmax = compute_global_min_max(train_dataset)
+        # Fit normalisation on the training set only
+        gmin, gmax = compute_global_min_max(train_dataset)
+
     norm = NormalizeZeroToOne(int(gmin), int(gmax))
 
     full_transform = transforms.Compose([
@@ -312,13 +322,15 @@ def make_nmnist_loaders(
         norm,
     ])
 
+    print("  [datasets] Creating train NMNIST dataset object ...", flush=True)
     train_dataset = tonic.datasets.NMNIST(
         save_to=data_root, train=True, transform=full_transform
     )
+    print("  [datasets] Creating test NMNIST dataset object ...", flush=True)
     test_dataset = tonic.datasets.NMNIST(
         save_to=data_root, train=False, transform=full_transform
     )
-
+    print("  [datasets] Creating DataLoaders ...", flush=True)
     trainloader = DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True,
         num_workers=num_workers, pin_memory=True,
@@ -327,6 +339,7 @@ def make_nmnist_loaders(
         test_dataset, batch_size=batch_size * 2, shuffle=False,
         num_workers=num_workers, pin_memory=True,
     )
+    print("  [datasets] DataLoaders ready.", flush=True)
     return trainloader, testloader
 
 
@@ -338,6 +351,8 @@ def make_poker_dvs_loaders(
     denoise_filter_time: int = 500,
     num_workers:    int   = 0,
     seed:           int   = 42,
+    global_min:     float | None = None,
+    global_max:     float | None = None,
 ) -> tuple[DataLoader, DataLoader]:
     """
     Build PokerDVS train and test DataLoaders with a class-balanced split.
@@ -353,23 +368,31 @@ def make_poker_dvs_loaders(
         denoise_filter_time (int): Noise filter time constant (µs).
         num_workers    (int): DataLoader workers.
         seed           (int): RNG seed for the split.
+        global_min (float, optional): Precomputed global min pixel value.
+            If both global_min and global_max are given, the full-dataset
+            scan (compute_global_min_max) is skipped.
+        global_max (float, optional): Precomputed global max pixel value.
 
     Returns:
         (trainloader, testloader)
     """
     sensor_size = (64, 64, 2)
 
-    base_transform = transforms.Compose([
-        tonic.transforms.Denoise(filter_time=denoise_filter_time),
-        transforms.ToFrame(sensor_size=sensor_size, n_time_bins=n_steps),
-        MergePolarity(mode="sum"),
-        PermuteChannels(),
-    ])
+    if global_min is not None and global_max is not None:
+        gmin, gmax = global_min, global_max
+    else:
+        base_transform = transforms.Compose([
+            tonic.transforms.Denoise(filter_time=denoise_filter_time),
+            transforms.ToFrame(sensor_size=sensor_size, n_time_bins=n_steps),
+            MergePolarity(mode="sum"),
+            PermuteChannels(),
+        ])
 
-    dataset = EventDataset(directory_path=directory_path, transform=base_transform)
+        dataset = EventDataset(directory_path=directory_path, transform=base_transform)
 
-    # Fit normalisation on the full dataset (small enough to scan quickly)
-    gmin, gmax = compute_global_min_max(dataset)
+        # Fit normalisation on the full dataset (small enough to scan quickly)
+        gmin, gmax = compute_global_min_max(dataset)
+
     norm = NormalizeZeroToOne(int(gmin), int(gmax))
 
     full_transform = transforms.Compose([
