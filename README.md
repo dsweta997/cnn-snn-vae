@@ -223,19 +223,6 @@ Model weights are saved to the paths specified in the config under `classifier.v
 
 ## Original notebooks
 
-The two Jupyter notebooks (`VAE_Clf_NMNIST_FullRun.ipynb` and `VAE_Clf_PokerDVS_FullRun.ipynb`) contain the original, self-contained experiments including additional visualisations (spike animations, per-class reconstructions).  The modular `src/` package is a refactored extraction of the same code.
+The two Jupyter notebooks (`VAE_Clf_NMNIST_FullRun.ipynb` and `VAE_Clf_PokerDVS_FullRun.ipynb`) in `archive/` contain the original, self-contained experiments including additional visualisations (spike animations, per-class reconstructions).  The modular `src/` package is a refactored extraction of the same code.
 
 ---
-
-## Citation / acknowledgements
-
-This project is a Masters dissertation.  The SNN layers follow the STBP (Spatio-Temporal Back Propagation) formulation:
-
-> Wu et al., "Spatio-Temporal Backpropagation for Training High-Performance Spiking Neural Networks", *Frontiers in Neuroscience*, 2018.
-
-The MMD prior is from:
-
-> Zhao et al., "InfoVAE: Balancing Learning and Inference in Variational Autoencoders", *AAAI 2019*.
-> Tolstikhin et al., "Wasserstein Auto-Encoders", *ICLR 2018*.
-
-Event-camera data loading uses [Tonic](https://tonic.readthedocs.io/) and SNN layers use [snnTorch](https://snntorch.readthedocs.io/).
